@@ -21,6 +21,7 @@ Optional desktop notification on a fresh switch: --notify
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -31,6 +32,19 @@ STATE_DIR = os.environ.get(
     "CC_MODEL_WATCH_STATE_DIR",
     os.path.join(os.path.expanduser("~"), ".cache", "cc-model-watch"),
 )
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def safe_filename_component(value, default="global"):
+    """Return a single path-safe filename component.
+
+    Only ``[A-Za-z0-9_-]`` are kept so stamp paths cannot escape STATE_DIR via
+    ``..``, ``/``, or other path separators. Empty/None becomes ``default``.
+    """
+    if not value:
+        return default
+    cleaned = _SAFE_FILENAME_RE.sub("", str(value))
+    return cleaned or default
 
 
 def last_served_model(transcript_path, tail_bytes=None):
@@ -93,9 +107,9 @@ def maybe_notify(mismatch, session_id):
     the primary signal — so notifier absence or failure is intentionally
     non-fatal.
     """
-    stamp = os.path.join(
-        STATE_DIR, "notified-{}-{}".format(session_id or "global", short(mismatch[1]))
-    )
+    sid = safe_filename_component(session_id, default="global")
+    served = safe_filename_component(short(mismatch[1]), default="unknown")
+    stamp = os.path.join(STATE_DIR, "notified-{}-{}".format(sid, served))
     try:
         if os.path.exists(stamp) and time.time() - os.path.getmtime(stamp) < COOLDOWN_SECONDS:
             return False

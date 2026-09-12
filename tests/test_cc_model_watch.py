@@ -140,21 +140,95 @@ class TestOutput(unittest.TestCase):
         self.assertEqual(buf.getvalue(), "")
 
 
+class TestSafeFilenameComponent(unittest.TestCase):
+    def test_passes_through_normal_session_ids(self):
+        self.assertEqual(w.safe_filename_component("abc-123_def"), "abc-123_def")
+
+    def test_empty_becomes_default(self):
+        self.assertEqual(w.safe_filename_component(None), "global")
+        self.assertEqual(w.safe_filename_component(""), "global")
+        self.assertEqual(w.safe_filename_component("!!!"), "global")
+
+    def test_strips_path_separators_and_dots(self):
+        self.assertEqual(
+            w.safe_filename_component("/../../escaped"), "escaped"
+        )
+        self.assertEqual(
+            w.safe_filename_component("../../../escaped"), "escaped"
+        )
+
+
 class TestNotifyCooldown(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.old_state = w.STATE_DIR
+        w.STATE_DIR = self.tmp
+
+    def tearDown(self):
+        w.STATE_DIR = self.old_state
+
+    def _stamp_paths(self):
+        return [
+            os.path.join(self.tmp, name)
+            for name in os.listdir(self.tmp)
+            if name.startswith("notified-")
+        ]
+
     def test_second_notify_within_cooldown_is_suppressed(self):
-        tmp = tempfile.mkdtemp()
-        old = w.STATE_DIR
-        w.STATE_DIR = tmp
-        try:
-            mismatch = ("claude-fable-5", "claude-opus-4-8")
-            first = w.maybe_notify(mismatch, "s1")
-            second = w.maybe_notify(mismatch, "s1")
-            self.assertFalse(second)
-            # first is True only if a notifier binary exists; stamp must exist either way
-            self.assertTrue(os.listdir(tmp))
-            self.assertIn(first, (True, False))
-        finally:
-            w.STATE_DIR = old
+        mismatch = ("claude-fable-5", "claude-opus-4-8")
+        first = w.maybe_notify(mismatch, "s1")
+        second = w.maybe_notify(mismatch, "s1")
+        self.assertFalse(second)
+        # first is True only if a notifier binary exists; stamp must exist either way
+        self.assertTrue(os.listdir(self.tmp))
+        self.assertIn(first, (True, False))
+
+    def test_safe_session_id_creates_stamp_under_state_dir(self):
+        mismatch = ("claude-fable-5", "claude-opus-4-8")
+        w.maybe_notify(mismatch, "sess-ok_1")
+        stamps = self._stamp_paths()
+        self.assertEqual(len(stamps), 1)
+        stamp = stamps[0]
+        self.assertTrue(stamp.startswith(self.tmp + os.sep))
+        self.assertEqual(
+            os.path.normpath(stamp),
+            os.path.join(self.tmp, "notified-sess-ok_1-opus-4-8"),
+        )
+        # Cool-down still suppresses a second notify for the same safe id.
+        self.assertFalse(w.maybe_notify(mismatch, "sess-ok_1"))
+
+    def test_path_traversal_session_ids_stay_under_state_dir(self):
+        mismatch = ("claude-fable-5", "claude-opus-4-8")
+        for bad_id in ("/../../escaped", "../../../escaped", "..\\..\\escaped"):
+            # Fresh STATE_DIR per payload so cooldown from an earlier sanitized
+            # id (all map to "escaped") does not hide stamp creation.
+            isolated = tempfile.mkdtemp()
+            w.STATE_DIR = isolated
+            try:
+                w.maybe_notify(mismatch, bad_id)
+                names = [
+                    name
+                    for name in os.listdir(isolated)
+                    if name.startswith("notified-")
+                ]
+                self.assertTrue(names, "expected a stamp for {!r}".format(bad_id))
+                for name in names:
+                    stamp = os.path.join(isolated, name)
+                    resolved = os.path.normpath(stamp)
+                    state_root = os.path.normpath(isolated)
+                    self.assertTrue(
+                        resolved == state_root
+                        or resolved.startswith(state_root + os.sep),
+                        "stamp escaped STATE_DIR: {} (from session_id={!r})".format(
+                            resolved, bad_id
+                        ),
+                    )
+                    self.assertNotIn("..", name)
+                    self.assertNotIn(os.sep, name)
+                    self.assertNotIn("/", name)
+                    self.assertNotIn("\\", name)
+            finally:
+                w.STATE_DIR = self.tmp
 
 
 if __name__ == "__main__":
