@@ -106,15 +106,31 @@ def maybe_notify(mismatch, session_id):
         return False
     title = "Claude Code: model switched"
     body = "{} → {}".format(short(mismatch[0]), short(mismatch[1]))
-    if sys.platform == "darwin":
-        cmd = [
-            "osascript", "-e",
-            'display notification "{}" with title "{}"'.format(body, title),
-        ]
-    else:
-        cmd = ["notify-send", title, body]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=5, check=False)
+        if sys.platform == "darwin":
+            # Pass body/title as osascript argv — never interpolate into an
+            # AppleScript -e string literal (SEC-07 command injection).
+            script = (
+                "on run argv\n"
+                "  display notification (item 1 of argv) "
+                "with title (item 2 of argv)\n"
+                "end run\n"
+            )
+            subprocess.run(
+                ["osascript", "-", body, title],
+                input=script,
+                capture_output=True,
+                timeout=5,
+                check=False,
+                text=True,
+            )
+        else:
+            subprocess.run(
+                ["notify-send", title, body],
+                capture_output=True,
+                timeout=5,
+                check=False,
+            )
         return True
     except (OSError, subprocess.TimeoutExpired):
         return False

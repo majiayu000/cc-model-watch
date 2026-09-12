@@ -1,9 +1,11 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -155,6 +157,94 @@ class TestNotifyCooldown(unittest.TestCase):
             self.assertIn(first, (True, False))
         finally:
             w.STATE_DIR = old
+
+
+class TestNotifyDarwinArgv(unittest.TestCase):
+    def test_osascript_uses_argv_not_interpolated_e_flag(self):
+        """Model ids with AppleScript metacharacters must not enter a -e script."""
+        tmp = tempfile.mkdtemp()
+        old_state, old_platform = w.STATE_DIR, sys.platform
+        w.STATE_DIR = tmp
+        sys.platform = "darwin"
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((list(cmd), kwargs))
+            return subprocess.CompletedProcess(cmd, 0)
+
+        # Crafted served model: quote + AppleScript breakout attempt
+        crafted = 'claude-evil"; do shell script "id'
+        mismatch = ("claude-fable-5", crafted)
+        try:
+            with mock.patch.object(subprocess, "run", side_effect=fake_run):
+                ok = w.maybe_notify(mismatch, "sec07")
+            self.assertTrue(ok)
+            self.assertEqual(len(calls), 1)
+            cmd, kwargs = calls[0]
+            self.assertEqual(cmd[0], "osascript")
+            self.assertEqual(cmd[1], "-")
+            self.assertNotIn("-e", cmd)
+            # Body/title are separate argv after the script source marker.
+            body = cmd[2]
+            title = cmd[3]
+            self.assertIn('evil"; do shell script "id', body)
+            self.assertEqual(title, "Claude Code: model switched")
+            # Script text is passed via stdin, not via .format into -e.
+            script = kwargs.get("input") or ""
+            self.assertIn("on run argv", script)
+            self.assertNotIn(crafted, script)
+            self.assertNotIn(body, script)
+            # Cooldown stamp written even when subprocess is mocked.
+            self.assertTrue(os.listdir(tmp))
+        finally:
+            w.STATE_DIR = old_state
+            sys.platform = old_platform
+
+    def test_linux_notify_send_argv_unchanged(self):
+        tmp = tempfile.mkdtemp()
+        old_state, old_platform = w.STATE_DIR, sys.platform
+        w.STATE_DIR = tmp
+        sys.platform = "linux"
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0)
+
+        mismatch = ("claude-fable-5", 'claude-x"; rm -rf tmp')
+        try:
+            with mock.patch.object(subprocess, "run", side_effect=fake_run):
+                ok = w.maybe_notify(mismatch, "linux-sec")
+            self.assertTrue(ok)
+            self.assertEqual(calls[0][0], "notify-send")
+            self.assertEqual(calls[0][1], "Claude Code: model switched")
+            self.assertIn('x"; rm -rf tmp', calls[0][2])
+        finally:
+            w.STATE_DIR = old_state
+            sys.platform = old_platform
+
+    def test_cooldown_suppresses_second_call_with_mocked_subprocess(self):
+        tmp = tempfile.mkdtemp()
+        old_state, old_platform = w.STATE_DIR, sys.platform
+        w.STATE_DIR = tmp
+        sys.platform = "darwin"
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0)
+
+        mismatch = ("claude-fable-5", "claude-opus-4-8")
+        try:
+            with mock.patch.object(subprocess, "run", side_effect=fake_run):
+                first = w.maybe_notify(mismatch, "cool")
+                second = w.maybe_notify(mismatch, "cool")
+            self.assertTrue(first)
+            self.assertFalse(second)
+            self.assertEqual(len(calls), 1)
+        finally:
+            w.STATE_DIR = old_state
+            sys.platform = old_platform
 
 
 if __name__ == "__main__":
