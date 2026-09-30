@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -57,6 +58,81 @@ class TestLastServedModel(unittest.TestCase):
             [assistant("claude-opus-4-8"), json.dumps({"message": {"role": "user"}})]
         )
         self.assertEqual(w.last_served_model(path), "claude-opus-4-8")
+
+    def test_latest_oversized_assistant_model_is_found(self):
+        latest = json.dumps({
+            "type": "assistant",
+            "message": {"model": "claude-opus-4-8", "content": "x" * 250000},
+        })
+        path = write_transcript([assistant("claude-fable-5"), latest])
+        self.addCleanup(os.unlink, path)
+        self.assertEqual(w.last_served_model(path), "claude-opus-4-8")
+
+    def test_oversized_tool_result_does_not_hide_model(self):
+        tool_result = json.dumps({
+            "type": "user",
+            "message": {"role": "user", "content": "x" * 250000},
+        })
+        path = write_transcript([assistant("claude-opus-4-8"), tool_result])
+        self.addCleanup(os.unlink, path)
+        self.assertEqual(w.last_served_model(path), "claude-opus-4-8")
+        self.assertEqual(
+            w.detect(stdin_json("claude-fable-5", path)),
+            ("claude-fable-5", "claude-opus-4-8"),
+        )
+
+    def test_ignores_non_assistant_model(self):
+        path = write_transcript([
+            assistant("claude-opus-4-8"),
+            json.dumps({"message": {"role": "user", "model": "decoy"}}),
+        ])
+        self.addCleanup(os.unlink, path)
+        self.assertEqual(w.last_served_model(path), "claude-opus-4-8")
+
+    def test_skips_non_object_records_and_messages(self):
+        for record in ([{"model": "decoy"}], {"message": ["model"]}):
+            with self.subTest(record=record):
+                path = write_transcript([
+                    assistant("claude-opus-4-8"), json.dumps(record),
+                ])
+                self.addCleanup(os.unlink, path)
+                self.assertEqual(w.last_served_model(path), "claude-opus-4-8")
+
+    def test_skips_line_above_parse_cap_and_continues(self):
+        latest = json.dumps({
+            "type": "assistant",
+            "message": {"model": "decoy", "content": "x" * w.MAX_LINE_BYTES},
+        })
+        path = write_transcript([assistant("claude-opus-4-8"), latest])
+        self.addCleanup(os.unlink, path)
+        self.assertEqual(w.last_served_model(path), "claude-opus-4-8")
+
+    def test_does_not_parse_valid_json_suffix_of_partial_line(self):
+        suffix = assistant("decoy")
+        path = write_transcript([assistant("claude-opus-4-8"), "x" * 100 + suffix])
+        self.addCleanup(os.unlink, path)
+        self.assertIsNone(w.last_served_model(path, tail_bytes=len(suffix) + 1))
+
+    def test_default_history_limit_is_bounded(self):
+        path = write_transcript([assistant("claude-opus-4-8"), "x" * w.TAIL_BYTES])
+        self.addCleanup(os.unlink, path)
+        self.assertIsNone(w.last_served_model(path))
+
+    def test_latest_record_without_final_newline(self):
+        path = write_transcript([assistant("claude-fable-5")])
+        self.addCleanup(os.unlink, path)
+        with open(path, "ab") as f:
+            f.write(assistant("claude-opus-4-8").encode("utf-8"))
+        self.assertEqual(w.last_served_model(path), "claude-opus-4-8")
+
+    def test_recent_model_stops_reading_before_old_history(self):
+        data = ("x" * (2 * w.TAIL_BYTES) + "\n" + assistant("claude-opus-4-8"))
+        transcript = io.BytesIO(data.encode("utf-8"))
+        transcript.read = mock.Mock(wraps=transcript.read)
+        with mock.patch("cc_model_watch.open", return_value=transcript):
+            self.assertEqual(w.last_served_model("session.jsonl"), "claude-opus-4-8")
+        self.assertEqual(transcript.read.call_count, 1)
+        self.assertLess(transcript.read.call_args[0][0], w.TAIL_BYTES)
 
     def test_tail_window_respected(self):
         # Old model beyond the tail window must be invisible.

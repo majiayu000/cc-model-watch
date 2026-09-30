@@ -25,7 +25,8 @@ import subprocess
 import sys
 import time
 
-TAIL_BYTES = int(os.environ.get("CC_MODEL_WATCH_TAIL_BYTES", "200000"))
+TAIL_BYTES = int(os.environ.get("CC_MODEL_WATCH_TAIL_BYTES", "4194304"))
+MAX_LINE_BYTES = 1024 * 1024
 COOLDOWN_SECONDS = int(os.environ.get("CC_MODEL_WATCH_COOLDOWN", "300"))
 STATE_DIR = os.environ.get(
     "CC_MODEL_WATCH_STATE_DIR",
@@ -33,32 +34,64 @@ STATE_DIR = os.environ.get(
 )
 
 
+def _reverse_lines(f, tail_bytes):
+    """Yield complete lines newest first, with bounded reads and line storage."""
+    f.seek(0, 2)
+    position = f.tell()
+    start = max(0, position - tail_bytes)
+    pending = b""
+    oversized = False
+    while position > start:
+        size = min(65536, position - start)
+        position -= size
+        f.seek(position)
+        parts = f.read(size).split(b"\n")
+        if not oversized:
+            pending = parts[-1] + pending
+            oversized = len(pending) > MAX_LINE_BYTES
+            if oversized:
+                pending = b""
+        if len(parts) > 1:
+            if not oversized:
+                yield pending
+            yield from reversed(parts[1:-1])
+            pending = parts[0]
+            oversized = False
+    # At the history boundary, pending may start in the middle of a record.
+    if start == 0 and not oversized:
+        yield pending
+
+
 def last_served_model(transcript_path, tail_bytes=None):
     """Return the model id of the most recent assistant message, or None.
 
-    Only tails the last ``tail_bytes`` of the transcript so the statusline
-    stays fast on long sessions. Skips ``<synthetic>`` (error placeholder)
-    entries and malformed lines.
+    Scan complete lines backwards within ``tail_bytes`` (4 MiB by default).
+    Skip lines over 1 MiB, synthetic entries and malformed records. Stop as
+    soon as a model is found so normal statusline reads stay small.
     """
     if tail_bytes is None:
         tail_bytes = TAIL_BYTES
     try:
         with open(transcript_path, "rb") as f:
-            f.seek(0, 2)
-            f.seek(max(0, f.tell() - tail_bytes))
-            lines = f.read().decode("utf-8", "ignore").splitlines()
+            for line in _reverse_lines(f, tail_bytes):
+                if b'"model"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line.decode("utf-8", "ignore"))
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                message = obj.get("message")
+                if not isinstance(message, dict):
+                    continue
+                if obj.get("type") != "assistant" and message.get("role") != "assistant":
+                    continue
+                model = message.get("model")
+                if model and model != "<synthetic>":
+                    return model
     except OSError:
         return None
-    for line in reversed(lines):
-        if '"model"' not in line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        model = (obj.get("message") or {}).get("model")
-        if model and model != "<synthetic>":
-            return model
     return None
 
 
