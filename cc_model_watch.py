@@ -58,7 +58,11 @@ def _reverse_lines(f, tail_bytes):
             pending = parts[0]
             oversized = False
     # At the history boundary, pending may start in the middle of a record.
-    if start == 0 and not oversized:
+    if pending and not oversized:
+        if start > 0:
+            f.seek(start - 1)
+            if f.read(1) != b"\n":
+                return
         yield pending
 
 

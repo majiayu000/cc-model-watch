@@ -28,10 +28,11 @@ disagree, you've been switched. No network calls, no scraping — both values
 come from Claude Code itself, read locally.
 
 The transcript is scanned backwards in 64 KiB chunks, stopping at the latest
-assistant model. At most 4 MiB of recent history is read by default, so a large
-tool result does not hide the preceding assistant record. Lines over 1 MiB
-are skipped, and a partial line at the scan boundary is never parsed. If no
-assistant model is found within these limits, no warning is shown.
+assistant model. At most 4 MiB of recent history is scanned by default, plus
+one byte to check the boundary, so a large tool result does not hide the
+preceding assistant record. Lines over 1 MiB are skipped, and a partial line
+at the scan boundary is never parsed. If no assistant model is found within
+these limits, no warning is shown.
 
 ## Install
 
