@@ -4,12 +4,18 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/majiayu000/cc-model-watch/blob/main/LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
 
-**Know instantly when Claude Code silently swaps your model.**
+**A local Claude Code statusline warning for selected and served model mismatches.**
 
-You selected Fable 5 (or Opus). Under load, fallback, or plan limits, the model
-actually answering you may quietly become a different one — and nothing shouts
-about it. `cc-model-watch` puts a loud red warning in your statusline the moment
-the model *serving* your session differs from the model you *selected*:
+`cc-model-watch` is a Python 3.8+ script with no third-party dependencies. It
+compares the selected model in Claude Code's statusline input with the latest
+assistant model it can read from the transcript tail. A mismatch produces a red
+statusline warning and an optional desktop notification; it does not establish
+why the models differ.
+
+[Install](#install) · [Configuration](#configuration) ·
+[Known false positive](#known-false-positive)
+
+Example warning:
 
 ```
 Fable 5 ｜ 🔻 model switched fable-5 → opus-4-8 ｜ my-project
@@ -24,7 +30,7 @@ to you.
 Claude Code passes your **selected** model to statusline scripts via stdin JSON
 (`model.id`). The session transcript (`transcript_path`) records the model that
 **actually served** each assistant message (`message.model`). When they
-disagree, you've been switched. No network calls, no scraping — both values
+disagree, the script reports a mismatch. No network calls, no scraping — both values
 come from Claude Code itself, read locally.
 
 Only the last ~200 KB of the transcript is read, so it stays fast on long
@@ -91,9 +97,9 @@ transient warning. It clears on the next assistant message.
 
 ## Why not just read the statusline model name?
 
-Every existing statusline tool displays `model.display_name` — the model you
-*selected*. None of them compare it against what *actually served* your
-messages. That comparison is the whole point of this tool.
+The selected model name alone does not show the model recorded in the latest
+assistant message. This tool compares those two local values. A manual `/model`
+change can also produce a temporary mismatch, as described above.
 
 ## Development
 
