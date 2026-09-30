@@ -116,10 +116,14 @@ class TestLastServedModel(unittest.TestCase):
     def test_keeps_complete_record_at_history_boundary(self):
         model_line = assistant("claude-opus-4-8")
         newer_line = json.dumps({"message": {"role": "user", "content": "tool output"}})
-        path = write_transcript(["older history", model_line, newer_line])
-        self.addCleanup(os.unlink, path)
-        window = len((model_line + "\n" + newer_line + "\n").encode("utf-8"))
-        self.assertEqual(w.last_served_model(path, tail_bytes=window), "claude-opus-4-8")
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=newline):
+                tail = (model_line + newline + newer_line + newline).encode("utf-8")
+                path = write_transcript([])
+                self.addCleanup(os.unlink, path)
+                with open(path, "wb") as f:
+                    f.write(("older history" + newline).encode("utf-8") + tail)
+                self.assertEqual(w.last_served_model(path, tail_bytes=len(tail)), "claude-opus-4-8")
 
     def test_default_history_limit_is_bounded(self):
         path = write_transcript([assistant("claude-opus-4-8"), "x" * w.TAIL_BYTES])
