@@ -13,7 +13,7 @@ statusline warning and an optional desktop notification; it does not establish
 why the models differ.
 
 [Install](#install) · [Configuration](#configuration) ·
-[Known false positive](#known-false-positive)
+[Troubleshooting](#why-is-the-warning-empty) · [Known false positive](#known-false-positive)
 
 Example warning:
 
@@ -61,7 +61,7 @@ Shows `model ｜ [warning] ｜ directory`.
 
 ### Option B: embed into your existing statusline (recommended)
 
-Segment mode prints **only** the warning (empty when everything is fine), so
+Segment mode prints **only** an observed mismatch warning, so
 you can splice it into any statusline script — bash, ccstatusline custom
 command, powerline segment:
 
@@ -94,6 +94,22 @@ Flags: `--statusline` (full line), `--notify` (desktop alert), `--no-color`.
 After you manually switch models with `/model`, the last transcript message
 still carries the old model until the next reply arrives — so you'll see one
 transient warning. It clears on the next assistant message.
+
+## Why is the warning empty?
+
+An empty segment means no mismatch was detected from the available inputs. It
+is not proof that the provider served the expected model throughout the session.
+
+- stdin must contain `model.id` and a readable `transcript_path`;
+- the scanned tail must contain a usable `message.model`; missing files,
+  malformed records and `<synthetic>` placeholders cannot establish a match;
+- only the configured tail is inspected, not every earlier assistant reply.
+
+Check that your wrapper passes the original stdin JSON to this script. Use
+`--statusline --no-color` to inspect the full-line rendering. After a manual
+`/model` change, wait for the next assistant reply before interpreting a mismatch.
+For a bug report, share the invocation and redacted model fields, not transcript
+content or credentials. This comparison cannot determine why the IDs differ.
 
 ## Why not just read the statusline model name?
 
