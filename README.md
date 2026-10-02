@@ -33,8 +33,12 @@ Claude Code passes your **selected** model to statusline scripts via stdin JSON
 disagree, the script reports a mismatch. No network calls, no scraping — both values
 come from Claude Code itself, read locally.
 
-Only the last ~200 KB of the transcript is read, so it stays fast on long
-sessions (well under Claude Code's statusline timeout).
+The transcript is scanned backwards in 64 KiB chunks, stopping at the latest
+assistant model. At most 4 MiB of recent history is scanned by default, plus
+one byte to check the boundary, so a large tool result does not hide the
+preceding assistant record. Lines over 1 MiB are skipped, and a partial line
+at the scan boundary is never parsed. If no assistant model is found within
+these limits, no warning is shown.
 
 ## Install
 
@@ -83,7 +87,7 @@ Everything is optional, via environment variables:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CC_MODEL_WATCH_TAIL_BYTES` | `200000` | How much of the transcript tail to scan |
+| `CC_MODEL_WATCH_TAIL_BYTES` | `4194304` | Maximum bytes of transcript history to scan |
 | `CC_MODEL_WATCH_COOLDOWN` | `300` | Seconds between repeat notifications |
 | `CC_MODEL_WATCH_STATE_DIR` | `~/.cache/cc-model-watch` | Notification stamp files |
 
